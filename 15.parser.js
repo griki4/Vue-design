@@ -77,7 +77,7 @@ function tokenize(str) {
                     // 遇到标签开始标志说明之前的内容是一个完整的文本
                     tokens.push({
                         type: 'text',
-                        name: chars.join('')
+                        content: chars.join('')
                     })
                     chars.length = 0
                     str = str.slice(1)
@@ -158,3 +158,99 @@ function parse(str) {
 
 const ast = parse(`<div><p>Vue</p><p>Template</p></div>`)
 console.log(ast)
+
+// dump函数用于展示结果
+function dump(node, indent = 0) {
+    const type = node.type
+    // 根节点不描述；标签使用标签名称描述；文本使用文本内容描述
+    const desc = node.type === 'Root'
+        ? ''
+        : node.type === 'Element'
+            ? node.tag
+            : node.content
+    // 打印节点的类型和描述
+    console.log(`${'-'.repeat(indent)}${type}: ${desc}`)
+    // 递归打印子节点
+    if (node.children) {
+        node.children.forEach(n => dump(n, indent + 2))
+    }
+}
+
+// 深度优先遍历AST，能够访问到AST中的节点
+// context上下文参数，使得AST转换函数可以共享数据
+function traverseNode(ast, context) {
+    // context存储当前转换节点
+    context.currentNode = ast
+    // 增加一个存储退出阶段函数的数组
+    const exitFns = []
+    // context.transforms是一个数组，包含多个回调函数
+    const transforms = context.nodeTransforms
+    // 依次执行回调函数
+    for (let i = 0; i < transforms.length; i++) {
+        const onExit = transforms[i](context.currentNode, context)
+        // 进入阶段的函数的返回值就是退出阶段需要执行的函数
+        if (onExit) {
+            exitFns.push(onExit)
+        }
+        // 执行玩回调函数后需要检查context.currentNode是否还存在，因为可能会有移除节点操作
+        if (!context.currentNode) return
+    }
+    // 递归访问子节点
+    const children = context.currentNode.children
+    if (children) {
+        for (let i = 0; i < children.length; i++) {
+            // 遍历子节点之前先更新上下文信息
+            context.parent = context.currentNode
+            context.childIndex = i
+            traverseNode(children[i], context)
+        }
+    }
+
+    // 在退出阶段，反向执行exitFns中的函数
+    let i = exitFns.length
+    while (i--) {
+        exitFns[i]()
+    }
+}
+
+function transform(ast) {
+    const context = {
+        // 当前正在转换的节点
+        currentNode: null,
+        // 当前正在转换的节点在父节点中的索引位置
+        childIndex: 0,
+        // 当前正在转换的节点的父节点
+        parent: null,
+        // 节点替换函数
+        replaceNode(node) {
+            // 寻找当前节点在父节点中的位置，使用新节点进行替换
+            context.parent.children[context.childIndex] = node
+            // 更改当前正在转换的节点
+            context.currentNode = node
+        },
+        removeNode() {
+            if (context.parent) {
+              // splice方法移除当前访问到的节点
+              context.parent.children.splice(context.childIndex, 1)
+              context.currentNode = null
+            }
+        },
+        // 用于转换节点的回调函数
+        nodeTransforms: [
+            transformText
+        ]
+    }
+    traverseNode(ast, context)
+    dump(ast)
+}
+
+function transformText(node, context) {
+    if (node.type === 'Text') {
+        context.replaceNode({
+            type: 'Element',
+            tag: 'span'
+        })
+    }
+}
+
+transform(ast)
