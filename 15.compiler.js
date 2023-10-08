@@ -159,8 +159,7 @@ function parse(str) {
 
 
 
-const ast = parse(`<div><p>Vue</p><p>Template</p></div>`)
-console.log(ast)
+
 
 // dump函数用于展示结果
 function dump(node, indent = 0) {
@@ -287,15 +286,16 @@ function transformRoot(node) {
         node.jsNode = {
             type: 'FunctionDecl',
             id: { type: 'StringLiteral', name: 'render' },
-            body: {
-                type: 'ReturnStatement',
-                return: vnodeJSAST
-            }
+            params: [],
+            body: [
+                {
+                    type: 'ReturnStatement',
+                    return: vnodeJSAST
+                }
+            ]
         }
     }
 }
-transform(ast)
-console.log(ast.jsNode)
 function render() {
     return h('div', [
         h('p', 'Vue'),
@@ -385,3 +385,113 @@ function createCallExpression(callee, arguments) {
         arguments
     }
 }
+
+
+
+
+function generate(node) {
+    const context = {
+        // 存储最终生成的渲染函数
+        code: '',
+        // push方法拼接代码
+        push(code) {
+            context.code += code
+        },
+        // 表示代码缩进的级别
+        currentIndent: 0,
+        // 用于换行的函数，换行时需要保留缩进
+        newline() {
+            context.code += '\n' + `  `.repeat(context.currentIndent)
+        },
+        // 缩进函数
+        indent() {
+            context.currentIndent++
+            context.newline()
+        },
+        // 取消缩进函数
+        deIndent() {
+            context.currentIndent--
+            context.newline()
+        }
+    }
+    // genCode用于生成渲染函数
+    genNode(node, context)
+    return context.code
+}
+
+// 根据JS AST中不同的节点类型调用对应的函数
+function genNode(node, context) {
+    switch (node.type) {
+        case 'FunctionDecl':
+            genFunctionDecl(node, context)
+            break
+        case 'ReturnStatement':
+            genReturnStatement(node, context)
+            break
+        case 'CallExpression':
+            genCallExpression(node, context)
+            break
+        case 'StringLiteral':
+            genStringLiteral(node, context)
+            break
+        case 'ArrayExpression':
+            genArrayExpression(node, context)
+            break
+    }
+}
+// 函数生命代码生成
+function genFunctionDecl(node, context) {
+    // 从context中取出工具函数
+    const { push, indent, deIndent } = context
+    push(`function ${node.id.name}`)
+    push('(')
+    // genNodeList生成函数参数代码
+    genNodeList(node.params, context)
+    push(')')
+    push('{')
+    // 缩进
+    indent()
+    // 生成函数主体代码
+    node.body.forEach(n => genNode(n, context))
+    deIndent()
+    push('}')
+}
+// 生成函数函数代码
+function genNodeList(nodes, context) {
+    const { push } = context
+    for (let i = 0; i < nodes.length; i++) {
+        const node = nodes[i]
+        genNode(node, context)
+        if (i < nodes.length - 1) {
+            push(', ')
+        }
+    }
+}
+function genArrayExpression(node, context) {
+    const { push } = context
+    push('[')
+    genNodeList(node.elements, context)
+    push(']')
+}
+function genReturnStatement(node, context) {
+    const { push } = context
+    push('return ')
+    genNode(node.return, context)
+}
+function genStringLiteral(node, context) {
+    const { push } = context
+    push(`'${node.value}'`)
+}
+function genCallExpression(node, context) {
+    const { push } = context
+    const { callee, arguments: args } = node
+    push(`${callee.name}(`)
+    genNodeList(args, context)
+    push(')')
+}
+
+const ast = parse(`<div><p>Vue</p><p>Template</p></div>`)
+transform(ast)
+console.log(ast.jsNode)
+const code = generate(ast.jsNode)
+console.log(code)
