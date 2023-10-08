@@ -156,6 +156,9 @@ function parse(str) {
     return root
 }
 
+
+
+
 const ast = parse(`<div><p>Vue</p><p>Template</p></div>`)
 console.log(ast)
 
@@ -175,7 +178,6 @@ function dump(node, indent = 0) {
         node.children.forEach(n => dump(n, indent + 2))
     }
 }
-
 // 深度优先遍历AST，能够访问到AST中的节点
 // context上下文参数，使得AST转换函数可以共享数据
 function traverseNode(ast, context) {
@@ -212,7 +214,6 @@ function traverseNode(ast, context) {
         exitFns[i]()
     }
 }
-
 function transform(ast) {
     const context = {
         // 当前正在转换的节点
@@ -237,20 +238,150 @@ function transform(ast) {
         },
         // 用于转换节点的回调函数
         nodeTransforms: [
+            transformRoot,
+            transformElement,
             transformText
         ]
     }
     traverseNode(ast, context)
     dump(ast)
 }
-
+// 用于转换文本节点的函数
 function transformText(node, context) {
-    if (node.type === 'Text') {
-        context.replaceNode({
-            type: 'Element',
-            tag: 'span'
-        })
+    if (node.type !== 'Text') {
+        return
+    }
+    // 文本节点就是一个字符串变量，直接使用node.content的内容创建一个StringLiteral类型的节点即可
+    node.jsNode = createStringLiteral(node.content)
+}
+function transformElement(node) {
+    // 编写在退出AST的过程中，确保子节点已经处理完毕
+    return () => {
+        if (node.type !== 'Element') {
+            return
+        }
+        // 创建h函数的调用，函数的第一个参数是标签名称即node.tag
+        const callExp = createCallExpression('h', [
+            createStringLiteral(node.tag)
+        ])
+        // 根据node.children处理h函数的其余参数
+        node.children.length === 1
+            // 只有一个子节点，直接使用子节点的jsNode作为参数
+            ? callExp.arguments.push(node.children[0].jsNode)
+            : callExp.arguments.push(
+                // 多个子节点则创建一个ArrayExpression对象
+                createArrayExpression(node.children.map(c => c.jsNode))
+            )
+        node.jsNode = callExp
     }
 }
-
+// 用于转换根节点的函数
+function transformRoot(node) {
+    return () => {
+        if (node.type !== 'Root') {
+            return
+        }
+        // 根节点的第一个子节点就是模板的根节点
+        const vnodeJSAST = node.children[0].jsNode
+        // 创建render函数的AST
+        node.jsNode = {
+            type: 'FunctionDecl',
+            id: { type: 'StringLiteral', name: 'render' },
+            body: {
+                type: 'ReturnStatement',
+                return: vnodeJSAST
+            }
+        }
+    }
+}
 transform(ast)
+console.log(ast.jsNode)
+function render() {
+    return h('div', [
+        h('p', 'Vue'),
+        h('p', 'Template')
+    ])
+}
+// 用于描述JavaScript代码的JS AST
+const FunctionDeclNode = {
+    type: 'FunctionDecl', // 代表该节点是一个函数声明
+    // 函数名称是一个标识符，本身也是一个节点
+    id: {
+        type: 'Identifier',
+        name: 'render' // 存储函数名
+    },
+    // 函数参数
+    params: [],
+    // 函数主体，数组中每一个元素就代表一条语句
+    body: [
+        {
+            type: 'ReturnStatement',
+            // 返回值是一个函数的调用，使用CallExpression类型
+            return: {
+                type: 'CallExpression',
+                callee: {
+                    type: 'Identifier',
+                    name: 'h'
+                },
+                params: [
+                    // 第一个参数是一个字符串
+                    { type: 'StringLiteral', name: 'div' },
+                    // 第二参数是一个数组，每一个数组元素都是对h函数的调用
+                    {
+                        type: 'ArrayExpression',
+                        elements: [
+                            {
+                                type: 'CallExpression',
+                                callee: {
+                                    type: 'Identifier',
+                                    name: 'h'
+                                },
+                                params: [
+                                    { type: 'StringLiteral', name: 'p' },
+                                    { type: 'StringLiteral', name: 'Vue' }
+                                ]
+                            },
+                            {
+                                type: 'CallExpression',
+                                callee: {
+                                    type: 'Identifier',
+                                    name: 'h'
+                                },
+                                params: [
+                                    { type: 'StringLiteral', name: 'p' },
+                                    { type: 'StringLiteral', name: 'Template' }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        }
+    ]
+}
+// 用于创建JS AST节点的辅助函数
+function createStringLiteral(value) {
+    return {
+        type: 'StringLiteral',
+        value
+    }
+}
+function createIdentifier(name) {
+    return {
+        type: 'Identifier',
+        name
+    }
+}
+function createArrayExpression(elements) {
+    return {
+        type: 'ArrayExpression',
+        elements
+    }
+}
+function createCallExpression(callee, arguments) {
+    return {
+        type: 'CallExpression',
+        callee: createIdentifier(callee),
+        arguments
+    }
+}
